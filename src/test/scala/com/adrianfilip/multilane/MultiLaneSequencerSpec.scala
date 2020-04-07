@@ -3,6 +3,7 @@ package com.adrianfilip.multilane
 import java.util.UUID
 
 import com.adrianfilip.multilane.Lane.CustomLane
+import com.adrianfilip.multilane.MultiLaneSequencer.Recorder
 import zio.clock.Clock
 import zio.duration._
 import zio.random.Random
@@ -10,7 +11,7 @@ import zio.stm.TMap
 import zio.test.Assertion._
 import zio.test._
 import zio.test.environment.{Live, TestClock}
-import zio.{Queue, _}
+import zio._
 import com.adrianfilip.multilane.MultiLaneSequencerSpecProgs._
 
 object MultiLaneSequencerSpec
@@ -27,17 +28,17 @@ object MultiLaneSequencerSpec
           for {
             requestsMap   <- generateMap(Set(Lane.LANE1))
             responsesMap  <- generateMap(Set(Lane.LANE1))
-            requestsHMap  <- TMap.make[Lane, List[UUID]]().commit
-            responsesHMap <- TMap.make[Lane, List[UUID]]().commit
-            mls           <- MultiLaneSequencer.makeWithMonitoring(requestsHMap, responsesHMap)
+            requestsRecordMap  <- TMap.make[Lane, List[UUID]]().commit
+            responsesRecordMap <- TMap.make[Lane, List[UUID]]().commit
+            mls           <- MultiLaneSequencer.make(Some(Recorder(requestsRecordMap, responsesRecordMap)))
             _ <- ZIO.collectAllPar(
               programs(requestsMap, responsesMap, Set(Lane.LANE1))
                 .map(x => mls.sequence(x._1, UUID.randomUUID(), x._2))
             )
             mappedRequests     <- extractResults(requestsMap)
             mappedResponses    <- extractResults(responsesMap)
-            monitoredRequests  <- requestsHMap.toList.commit
-            monitoredResponses <- responsesHMap.toList.commit
+            monitoredRequests  <- requestsRecordMap.toList.commit
+            monitoredResponses <- responsesRecordMap.toList.commit
           } yield assert(monitoredRequests, equalTo(monitoredResponses)) && assert(
             mappedRequests,
             equalTo(mappedResponses)
@@ -58,9 +59,9 @@ object MultiLaneSequencerSpec
           for {
             requestsMap   <- generateMap(Set(Lane.LANE1, Lane.LANE2))
             responsesMap  <- generateMap(Set(Lane.LANE1, Lane.LANE2))
-            requestsHMap  <- TMap.make[Lane, List[UUID]]().commit
-            responsesHMap <- TMap.make[Lane, List[UUID]]().commit
-            mls           <- MultiLaneSequencer.makeWithMonitoring(requestsHMap, responsesHMap)
+            requestsRecordMap  <- TMap.make[Lane, List[UUID]]().commit
+            responsesRecordMap <- TMap.make[Lane, List[UUID]]().commit
+            mls           <- MultiLaneSequencer.make(Some(Recorder(requestsRecordMap, responsesRecordMap)))
             _ <- ZIO.collectAllPar(
               programs(requestsMap, responsesMap, Set(Lane.LANE1), 2)
                 .map(x => mls.sequence(x._1, UUID.randomUUID(), x._2)) ++ programs(
@@ -72,8 +73,8 @@ object MultiLaneSequencerSpec
             )
             mappedRequests     <- extractResults(requestsMap)
             mappedResponses    <- extractResults(responsesMap)
-            monitoredRequests  <- requestsHMap.toList.commit
-            monitoredResponses <- responsesHMap.toList.commit
+            monitoredRequests  <- requestsRecordMap.toList.commit
+            monitoredResponses <- responsesRecordMap.toList.commit
           } yield assert(monitoredRequests, equalTo(monitoredResponses)) && assert(
             mappedRequests,
             equalTo(mappedResponses)
@@ -92,9 +93,9 @@ object MultiLaneSequencerSpec
         for {
           requestsMap   <- generateMap(Set(Lane.LANE1))
           responsesMap  <- generateMap(Set(Lane.LANE1))
-          requestsHMap  <- TMap.make[Lane, List[UUID]]().commit
-          responsesHMap <- TMap.make[Lane, List[UUID]]().commit
-          mls           <- MultiLaneSequencer.makeWithMonitoring(requestsHMap, responsesHMap)
+          requestsRecordMap  <- TMap.make[Lane, List[UUID]]().commit
+          responsesRecordMap <- TMap.make[Lane, List[UUID]]().commit
+          mls           <- MultiLaneSequencer.make(Some(Recorder(requestsRecordMap, responsesRecordMap)))
           _             <- TestClock.adjust(10.seconds)
           _ <- ZIO.collectAllPar(
             programs(requestsMap, responsesMap, Set(Lane.LANE1))
@@ -102,8 +103,8 @@ object MultiLaneSequencerSpec
           )
           mappedRequests     <- extractResults(requestsMap)
           mappedResponses    <- extractResults(responsesMap)
-          monitoredRequests  <- requestsHMap.toList.commit
-          monitoredResponses <- responsesHMap.toList.commit
+          monitoredRequests  <- requestsRecordMap.toList.commit
+          monitoredResponses <- responsesRecordMap.toList.commit
         } yield assert(monitoredRequests, equalTo(monitoredResponses)) && assert(
           mappedRequests,
           equalTo(mappedResponses)
@@ -119,7 +120,7 @@ object MultiLaneSequencerSpec
         def buildRequests(requestsMap: Map[Lane, Queue[Int]], responsesMap: Map[Lane, Queue[Int]]) =
           (1 to totalRequests).map { idx =>
             for {
-              lanesNr <- Random.Live.random.nextInt(maxLanes + 1).map(v => if (v == 0) 1 else v)
+              lanesNr <- random.nextInt(maxLanes + 1).map(v => if (v == 0) 1 else v)
               lanes   <- ZIO.collectAll((1 to lanesNr).map(_ => getRandomLane(lanesLineup)))
             } yield generateProgram(requestsMap, responsesMap, lanes.toSet, idx, maxDelay)
           }
@@ -130,7 +131,7 @@ object MultiLaneSequencerSpec
             responsesMap  <- generateMap(lanesLineup.toSet)
             requestsHMap  <- TMap.make[Lane, List[UUID]]().commit
             responsesHMap <- TMap.make[Lane, List[UUID]]().commit
-            mls           <- MultiLaneSequencer.makeWithMonitoring(requestsHMap, responsesHMap)
+            mls           <- MultiLaneSequencer.make(Some(Recorder(requestsHMap, responsesHMap)))
             requests      <- ZIO.collectAll(buildRequests(requestsMap, responsesMap))
             _ <- ZIO.collectAllPar(
               requests

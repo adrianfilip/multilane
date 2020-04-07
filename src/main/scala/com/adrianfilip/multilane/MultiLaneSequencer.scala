@@ -27,19 +27,25 @@ trait MultiLaneSequencer {
 
 object MultiLaneSequencer {
 
-  def make: UIO[MultiLaneSequencer] =
+  /**
+   * The point of recorder is to give you the option to record requests and responses in order per lane
+   * for monitoring and testing purposes.
+   */
+  def make(
+    recorder: Option[Recorder] = None
+  ): UIO[MultiLaneSequencer] =
     for {
       laningMap <- TMap.make[Lane, List[UUID]]().commit
     } yield new MultiLaneSequencer {
-
       def sequence[R, E, A](lanes: Set[Lane], programId: UUID, program: ZIO[R, E, A]): ZIO[R, E, A] = {
+
         val occupyLanes = STM
           .foreach(lanes) { lane =>
             for {
-              option <- laningMap.get(lane)
-              _ <- option match {
-                    case None     => laningMap.put(lane, List(programId))
-                    case Some(ls) => laningMap.put(lane, ls :+ programId)
+              _ <- appendToLane(laningMap, lane, programId)
+              _ <- recorder match {
+                    case Some(m) => appendToLane(m.requests, lane, programId)
+                    case None    => STM.unit
                   }
             } yield ()
           }
@@ -49,65 +55,6 @@ object MultiLaneSequencer {
           .foreach(lanes) { lane =>
             for {
               option <- laningMap.get(lane)
-              _ <- option match {
-                    case None            => STM.unit
-                    case Some(Nil)       => STM.unit
-                    case Some(head :: _) => if (head == programId) STM.unit else STM.retry
-                  }
-            } yield ()
-          }
-          .commit
-
-        val release = STM
-          .foreach(lanes) { lane =>
-            for {
-              option <- laningMap.get(lane)
-              _ <- option match {
-                    case None            => STM.unit
-                    case Some(Nil)       => STM.unit
-                    case Some(_ :: tail) => laningMap.put(lane, tail)
-                  }
-            } yield ()
-          }
-          .commit
-
-        for {
-          _ <- occupyLanes
-          p <- waitUntilFree.bracket_(release)(program)
-        } yield p
-
-      }
-    }
-
-  def makeWithMonitoring(
-    requestsMonitorMap: TMap[Lane, List[UUID]],
-    responsesMonitorMap: TMap[Lane, List[UUID]]
-  ): UIO[MultiLaneSequencer] =
-    for {
-      map <- TMap.make[Lane, List[UUID]]().commit
-    } yield new MultiLaneSequencer {
-      def sequence[R, E, A](lanes: Set[Lane], programId: UUID, program: ZIO[R, E, A]): ZIO[R, E, A] = {
-        val occupyLanes = STM
-          .foreach(lanes) { lane =>
-            for {
-              option <- map.get(lane)
-              _ <- option match {
-                    case None     => map.put(lane, List(programId))
-                    case Some(ls) => map.put(lane, ls :+ programId)
-                  }
-              reqOp <- requestsMonitorMap.get(lane)
-              _ <- reqOp match {
-                    case None     => requestsMonitorMap.put(lane, List(programId))
-                    case Some(ls) => requestsMonitorMap.put(lane, ls :+ programId)
-                  }
-            } yield ()
-          }
-          .commit
-
-        val waitUntilFree = STM
-          .foreach(lanes) { lane =>
-            for {
-              option <- map.get(lane)
               _ <- option match {
                     case None     => STM.unit
                     case Some(ls) => if (ls.head == programId) STM.unit else STM.retry
@@ -119,16 +66,10 @@ object MultiLaneSequencer {
         val release = STM
           .foreach(lanes) { lane =>
             for {
-              option <- map.get(lane)
-              _ <- option match {
-                    case None            => STM.unit
-                    case Some(Nil)       => map.put(lane, List.empty)
-                    case Some(_ :: tail) => map.put(lane, tail)
-                  }
-              respOp <- responsesMonitorMap.get(lane)
-              _ <- respOp match {
-                    case None     => responsesMonitorMap.put(lane, List(programId))
-                    case Some(ls) => responsesMonitorMap.put(lane, ls :+ programId)
+              _ <- removeFirstInLane(laningMap, lane)
+              _ <- recorder match {
+                    case Some(m) => appendToLane(m.responses, lane, programId)
+                    case None    => STM.unit
                   }
             } yield ()
           }
@@ -136,12 +77,34 @@ object MultiLaneSequencer {
 
         for {
           _ <- occupyLanes
-          _ = println(s"after occ $programId $lanes")
           p <- waitUntilFree.bracket_(release)(program)
-          _ = println(s"after release $programId $lanes")
         } yield p
 
       }
     }
+
+  case class Recorder(
+    requests: TMap[Lane, List[UUID]],
+    responses: TMap[Lane, List[UUID]]
+  )
+
+  def appendToLane(map: TMap[Lane, List[UUID]], lane: Lane, id: UUID): STM[Nothing, Unit] =
+    for {
+      l <- map.get(lane)
+      _ <- l match {
+            case None     => map.put(lane, List(id))
+            case Some(ls) => map.put(lane, ls :+ id)
+          }
+    } yield ()
+
+  def removeFirstInLane(map: TMap[Lane, List[UUID]], lane: Lane): STM[Nothing, Unit] =
+    for {
+      option <- map.get(lane)
+      _ <- option match {
+            case None            => STM.unit
+            case Some(Nil)       => map.put(lane, List.empty)
+            case Some(_ :: tail) => map.put(lane, tail)
+          }
+    } yield ()
 
 }

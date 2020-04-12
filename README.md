@@ -7,10 +7,10 @@
 
  | timestep | program | L1 |  L2 |  L3 |  L4 |
  |----------|---------|----|-----|-----|-----|
- | t0       | P1      | X  |  X  |     |     |
+ | t0       | P1      | X  |     | X   |     |
  | t1       | P2      | X  |     |     |     |
- | t2       | P3      |    |     | X   | X   |
- | t3       | P4      |    | X   | X   |     |
+ | t2       | P3      |    |  X  |     | X   |
+ | t3       | P4      | X  |  X  |     |     |
 
 Where `t0 < t1 < t2 < t3`
  The order in which the programs above are executed is guaranteed to be:
@@ -27,12 +27,12 @@ Where `t0 < t1 < t2 < t3`
  * L - lane
  * P - program
 
- |timestep| program |      L1 |  L2 |  L3 | L4 |
- |--------|---------|---------|-----|-----|----|
- |t0| P1  |  X | |  |       X |
- |t1| P2  |  X | | | |
- |t2| P3  |    |   X  |  |    X|
- |t3| P4  |  X  |  X | | |
+ |timestep| program | L1 | L2 | L3 | L4 |
+ |--------|---------|----|----|----|----|
+ |t0      | P1      |  X |    | X  |    |
+ |t1      | P2      |  X |    |    |    |
+ |t2      | P3      |    |  X |    |  X |
+ |t3      | P4      |  X |  X |    |    |
 
 where `t0 < t1 < t2 < t3`
  MultiLaneLocker guarantees that:
